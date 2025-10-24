@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blockchain E-Voting System</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🗳️ SatyaMath E-Voting</h1>
+            <p>Secure, Transparent, and Decentralized Voting on Ganache</p>
+        </div>
+
+        <div class="card">
+            <h2>🔌 Connection</h2>
+            <div id="connectionStatus" class="alert alert-warning">
+                Not connected. Please connect MetaMask and load the contract.
+            </div>
+            
+            <div class="form-group">
+                <label>Contract Address:</label>
+                <input type="text" id="contractAddress" name="ca" autocomplete="off" />
+            </div>
+            
+            <button class="btn btn-primary" onclick="connectWallet()">Connect MetaMask</button>
+            <button class="btn btn-success" onclick="loadContract()">Load Contract</button>
+            
+            <div class="status-bar hidden" id="statusBar">
+                <div class="status-item">
+                    <strong>Connected Account:</strong>
+                    <span id="accountAddress">-</span>
+                </div>
+                <div class="status-item">
+                    <strong>Current Phase:</strong>
+                    <span id="currentPhase">-</span>
+                </div>
+                <div class="status-item">
+                    <strong>Contract Address:</strong>
+                    <span id="loadedContract">-</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card hidden" id="ownerCard">
+            <h2>👑 Owner Controls</h2>
+            
+            <div class="owner-controls">
+                <button class="btn btn-success" onclick="startCommitPhase()">Start Commit Phase</button>
+                <button class="btn btn-info" onclick="startRevealPhase()">Start Reveal Phase</button>
+                <button class="btn btn-danger" onclick="endVoting()">End Voting</button>
+            </div>
+            
+            <div class="form-group" style="margin-top: 20px;">
+                <label>Add Eligible Voter Address:</label>
+                <input type="text" id="eligibleAddress" placeholder="0x..." />
+                <button class="btn btn-warning" onclick="addEligibleVoter()">Add Eligible Voter</button>
+            </div>
+
+            <div class="info-box" style="margin-top: 20px;">
+                <strong>Quick Setup (Auto-add 3 voters):</strong>
+                <button class="btn btn-warning" onclick="autoAddVoters()" style="width: 100%;">🚀 Auto-Add 3 Voters</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📊 Proposals & Results</h2>
+            <button class="btn btn-info" onclick="refreshProposals()">🔄 Refresh Results</button>
+            <div class="proposals-grid" id="proposalsContainer">
+                <p style="text-align: center; color: #666;">Load contract to see proposals...</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🗳️ Easy Voting</h2>
+            
+            <div class="info-box">
+                <strong>✨ One-Click Voting:</strong>
+                Click the buttons below to automatically vote. No manual account switching needed!
+            </div>
+
+            <div class="quick-vote-grid" id="quickVoteContainer">
+                <div class="voter-card">
+                    <h4>👤 Voter 1</h4>
+                    <p>Address: 0xFFcf...09f0</p>
+                    <button class="btn btn-success" onclick="quickVote(1, 0, 'commit')">🔒 Commit: Candidate A</button>
+                    <button class="btn btn-info" onclick="quickVote(1, 0, 'reveal')">🔓 Reveal: Candidate A</button>
+                </div>
+
+                <div class="voter-card">
+                    <h4>👤 Voter 2</h4>
+                    <p>Address: 0x22d4...e32b</p>
+                    <button class="btn btn-success" onclick="quickVote(2, 1, 'commit')">🔒 Commit: Candidate B</button>
+                    <button class="btn btn-info" onclick="quickVote(2, 1, 'reveal')">🔓 Reveal: Candidate B</button>
+                </div>
+
+                <div class="voter-card">
+                    <h4>👤 Voter 3</h4>
+                    <p>Address: 0xE11B...882d</p>
+                    <button class="btn btn-success" onclick="quickVote(3, 2, 'commit')">🔒 Commit: Candidate C</button>
+                    <button class="btn btn-info" onclick="quickVote(3, 2, 'reveal')">🔓 Reveal: Candidate C</button>
+                </div>
+            </div>
+
+            <div class="info-box" style="margin-top: 20px;">
+                <strong>How it works:</strong>
+                1. After starting Commit Phase, click any "Commit" button<br>
+                2. Approve the MetaMask request to import the voter account<br>
+                3. The vote will be automatically submitted<br>
+                4. Repeat for other voters<br>
+                5. After starting Reveal Phase, click "Reveal" buttons to count votes
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6/dist/ethers.umd.min.js"></script>
+    <script>
+        let provider;
+        let signer;
+        let contract;
+        let currentAccount;
+        let isOwner = false;
+
+        const CONTRACT_ABI = [
+            "function owner() view returns (address)",
+            "function phase() view returns (uint8)",
+            "function proposals(uint256) view returns (string name, uint256 voteCount)",
+            "function commits(address) view returns (bytes32)",
+            "function revealed(address) view returns (bool)",
+            "function eligible(address) view returns (bool)",
+            "function addEligible(address voter)",
+            "function startCommitPhase()",
+            "function startRevealPhase()",
+            "function endVoting()",
+            "function commitVote(bytes32 commit)",
+            "function revealVote(uint256 proposalId, string calldata secret)",
+            "function getProposals() view returns (string[] memory names, uint256[] memory counts)",
+            "function proposalCount() view returns (uint256)",
+            "function getCurrentPhase() view returns (string memory)"
+        ];
+
+        const VOTERS = {
+            1: {
+                address: '0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0',
+                privateKey: '0x6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1',
+                secret: 'voter1secret'
+            },
+            2: {
+                address: '0x22d491Bde2303f2f43325b2108D26f1eAbA1e32b',
+                privateKey: '0x6370fd033278c143179d81c5526140625662b8daa446c22ee2d73db3707e620c',
+                secret: 'voter2secret'
+            },
+            3: {
+                address: '0xE11BA2b4D45Eaed5996Cd0823791E0C93114882d',
+                privateKey: '0x646f1ce2fdad0e6deeeb5c7e8e5543bdde65e86029e2fd9fc169899c440a7913',
+                secret: 'voter3secret'
+            }
+        };
+
+        window.addEventListener('load', function() {
+            const input = document.getElementById('contractAddress');
+            input.value = '';
+            input.setAttribute('autocomplete', 'new-password');
+        });
+
+        async function connectWallet() {
+            try {
+                if (!window.ethereum) {
+                    showAlert('danger', 'MetaMask not found! Please install MetaMask browser extension.');
+                    return;
+                }
+
+                provider = new ethers.BrowserProvider(window.ethereum);
+                await window.ethereum.request({ method: 'eth_requestAccounts' });
+                signer = await provider.getSigner();
+                currentAccount = await signer.getAddress();
+
+                document.getElementById('accountAddress').textContent = currentAccount.substring(0, 10) + '...' + currentAccount.substring(currentAccount.length - 8);
+                document.getElementById('statusBar').classList.remove('hidden');
+                
+                showAlert('success', `Connected to MetaMask: ${currentAccount.substring(0, 10)}...`);
+            } catch (error) {
+                console.error(error);
+                showAlert('danger', 'Failed to connect to MetaMask: ' + error.message);
+            }
+        }
+
+        async function loadContract() {
+            try {
+                let contractAddress = document.getElementById('contractAddress').value;
+                
+                contractAddress = String(contractAddress).trim().replace(/\s+/g, '');
+                
+                if (!contractAddress || contractAddress.length < 40) {
+                    showAlert('warning', 'Please enter a valid contract address');
+                    return;
+                }
+
+                if (!contractAddress.startsWith('0x')) {
+                    contractAddress = '0x' + contractAddress;
+                }
+
+                if (contractAddress.includes('http') || contractAddress.includes('/')) {
+                    showAlert('danger', 'Invalid address. Please clear the field and paste only the contract address starting with 0x');
+                    document.getElementById('contractAddress').value = '';
+                    return;
+                }
+
+                if (!signer) {
+                    showAlert('warning', 'Please connect MetaMask first');
+                    return;
+                }
+
+                try {
+                    contractAddress = ethers.getAddress(contractAddress);
+                } catch (e) {
+                    showAlert('danger', 'Invalid address format. Address should be 42 characters starting with 0x');
+                    return;
+                }
+                
+                contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signer);
+                
+                const code = await provider.getCode(contractAddress);
+                if (code === '0x') {
+                    showAlert('danger', 'No contract found at this address. Make sure Ganache is running and contract is deployed.');
+                    return;
+                }
+                
+                document.getElementById('loadedContract').textContent = contractAddress.substring(0, 10) + '...' + contractAddress.substring(contractAddress.length - 8);
+
+                const ownerAddress = await contract.owner();
+                isOwner = currentAccount.toLowerCase() === ownerAddress.toLowerCase();
+                
+                if (isOwner) {
+                    document.getElementById('ownerCard').classList.remove('hidden');
+                }
+
+                await updatePhaseDisplay();
+                await refreshProposals();
+                
+                showAlert('success', 'Contract loaded successfully! Use the Easy Voting section below for one-click voting.');
+            } catch (error) {
+                console.error('Load contract error:', error);
+                showAlert('danger', 'Failed to load contract: ' + error.message);
+            }
+        }
+
+        async function autoAddVoters() {
+            try {
+                if (!contract) {
+                    showAlert('warning', 'Please load contract first');
+                    return;
+                }
+
+                showAlert('info', 'Adding 3 voters automatically...');
+
+                for (let i = 1; i <= 3; i++) {
+                    const voter = VOTERS[i];
+                    showAlert('info', `Adding Voter ${i}: ${voter.address.substring(0, 10)}...`);
+                    
+                    const tx = await contract.addEligible(voter.address);
+                    await tx.wait();
+                    
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+
+                showAlert('success', '✓ All 3 voters added successfully! Now click "Start Commit Phase"');
+            } catch (error) {
+                console.error(error);
+                showAlert('danger', 'Failed to auto-add voters: ' + error.message);
+            }
+        }
+
+        async function quickVote(voterNum, proposalId, action) {
+            try {
+                if (!contract) {
+                    showAlert('warning', 'Please load contract first');
+                    return;
+                }
+
+                const voter = VOTERS[voterNum];
+                const contractAddress = await contract.getAddress();
+
+                showAlert('info', `Switching to Voter ${voterNum}...`);
+
+                await window.ethereum.request({
+                    method: 'wallet_requestPermissions',
+                    params: [{ eth_accounts: {} }]
+                });
+
+                const accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts'
+                });
+
+                let voterAccountExists = accounts.some(acc => acc.toLowerCase() === voter.address.toLowerCase());
+
+                if (!voterAccountExists) {
+                    showAlert('info', `Please import Voter ${voterNum} account in MetaMask popup...`);
+                    
+                    try {
+                        await window.ethereum.request({
+                            method: 'wallet_importAccount',
+                            params: [voter.privateKey]
+                        });
+                    } catch (e) {
+                        showAlert('warning', `Please manually import this private key in MetaMask:\n${voter.privateKey}\n\nThen try again.`);
+                        return;
+                    }
+                }
+
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: '0x539' }]
+                });
+
+                provider = new ethers.BrowserProvider(window.ethereum);
+                signer = await provider.getSigner();
+                contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signer);
+
+                const currentAcc = await signer.getAddress();
+                if (currentAcc.toLowerCase() !== voter.address.toLowerCase()) {
+                    showAlert('danger', `Please switch to Voter ${voterNum} account (${voter.address}) in MetaMask and try again.`);
+                    return;
+                }
+
+                if (action === 'commit') {
+                    showAlert('info', `Committing vote for Voter ${voterNum}...`);
+                    
+                    const commitHash = ethers.keccak256(
+                        ethers.solidityPacked(['uint256', 'string'], [proposalId, voter.secret])
+                    );
+
+                    const tx = await contract.commitVote(commitHash);
+                    await tx.wait();
+                    
+                    showAlert('success', `✓ Voter ${voterNum} committed vote successfully!`);
+                } else if (action === 'reveal') {
+                    showAlert('info', `Revealing vote for Voter ${voterNum}...`);
+                    
+                    const tx = await contract.revealVote(proposalId, voter.secret);
+                    await tx.wait();
+                    
+                    showAlert('success', `✓ Voter ${voterNum} revealed vote successfully!`);
+                    
+                    setTimeout(() => refreshProposals(), 2000);
+                }
+
+            } catch (error) {
+                console.error(error);
+                showAlert('danger', `Failed for Voter ${voterNum}: ${error.message}`);
+            }
+        }
+
+        async function updatePhaseDisplay() {
+            try {
+                const phaseName = await contract.getCurrentPhase();
+                const phaseSpan = document.getElementById('currentPhase');
+                
+                let phaseClass = 'phase-created';
+                if (phaseName === 'Commit Phase') phaseClass = 'phase-commit';
+                else if (phaseName === 'Reveal Phase') phaseClass = 'phase-reveal';
+                else if (phaseName === 'Ended') phaseClass = 'phase-ended';
+                
+                phaseSpan.innerHTML = `<span class="phase-badge ${phaseClass}">${phaseName}</span>`;
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        async function refreshProposals() {
+            try {
+                if (!contract) {
+                    showAlert('warning', 'Please load contract first');
+                    return;
+                }
+
+                const [names, counts] = await contract.getProposals();
+                const container = document.getElementById('proposalsContainer');
+                
+                container.innerHTML = '';
+
+                for (let i = 0; i < names.length; i++) {
+                    const proposalDiv = document.createElement('div');
+                    proposalDiv.className = 'proposal-card';
+                    proposalDiv.innerHTML = `
+                        <h3>${names[i]}</h3>
+                        <div class="votes">${counts[i].toString()}</div>
+                        <div class="vote-label">votes</div>
+                    `;
+                    container.appendChild(proposalDiv);
+                }
+
+                await updatePhaseDisplay();
+            } catch (error) {
+                console.error(error);
+                showAlert('danger', 'Failed to refresh proposals: ' + error.message);
+            }
+        }
+
+        async function startCommitPhase() {
+            await executeOwnerAction('startCommitPhase', 'Commit phase started! Now use the one-click voting buttons below.');
+        }
+
+        async function startRevealPhase() {
+            await executeOwnerAction('startRevealPhase', 'Reveal phase started! Now click the Reveal buttons.');
+        }
+
+        async function endVoting() {
+            await executeOwnerAction('endVoting', 'Voting ended successfully!');
+        }
+
+        async function addEligibleVoter() {
+            try {
+                const address = document.getElementById('eligibleAddress').value.trim();
+                
+                if (!address) {
+                    showAlert('warning', 'Please enter a voter address');
+                    return;
+                }
+
+                showAlert('info', 'Adding eligible voter...');
+                const tx = await contract.addEligible(address);
+                await tx.wait();
+                
+                showAlert('success', `Voter ${address.substring(0, 10)}... added successfully!`);
+                document.getElementById('eligibleAddress').value = '';
+            } catch (error) {
+                console.error(error);
+                showAlert('danger', 'Failed to add eligible voter: ' + error.message);
+            }
+        }
+
+        async function executeOwnerAction(method, successMsg) {
+            try {
+                if (!contract) {
+                    showAlert('warning', 'Please load contract first');
+                    return;
+                }
+
+                showAlert('info', 'Executing transaction...');
+                const tx = await contract[method]();
+                await tx.wait();
+                
+                showAlert('success', successMsg);
+                await updatePhaseDisplay();
+            } catch (error) {
+                console.error(error);
+                showAlert('danger', `Failed to execute ${method}: ` + error.message);
+            }
+        }
+
+        function showAlert(type, message) {
+            const statusDiv = document.getElementById('connectionStatus');
+            statusDiv.className = `alert alert-${type}`;
+            statusDiv.textContent = message;
+        }
+
+        setInterval(() => {
+            if (contract) {
+                refreshProposals();
+            }
+        }, 10000);
+    </script>
+</body>
+</html>
